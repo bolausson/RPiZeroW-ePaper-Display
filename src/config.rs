@@ -127,10 +127,26 @@ impl Config {
         })
     }
 
-    /// Save configuration to a JSON file
+    /// Save configuration to a JSON file atomically
+    ///
+    /// Uses a write-to-temp-then-rename pattern to prevent corruption
+    /// if power is lost during the write operation. This is critical
+    /// for reliability on embedded devices without UPS.
     pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<(), ConfigError> {
+        let path = path.as_ref();
         let content = serde_json::to_string_pretty(self)?;
-        std::fs::write(path, content)?;
+
+        // Write to temporary file first
+        let tmp_path = path.with_extension("json.tmp");
+        std::fs::write(&tmp_path, &content)?;
+
+        // Atomic rename - either fully succeeds or fails, never partial
+        std::fs::rename(&tmp_path, path).map_err(|e| {
+            // Clean up temp file on rename failure
+            let _ = std::fs::remove_file(&tmp_path);
+            ConfigError::ReadError(e)
+        })?;
+
         Ok(())
     }
 

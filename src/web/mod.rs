@@ -65,7 +65,7 @@ impl WebServer {
             .route("/", get(routes::index))
             .route("/save", axum::routing::post(routes::save_config))
             .route("/apply", axum::routing::post(routes::save_and_apply))
-            .route("/action/{action}", get(routes::display_action))
+            .route("/action/:action", get(routes::display_action))
             .route("/health", get(routes::health))
             .with_state(state)
     }

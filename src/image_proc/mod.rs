@@ -45,6 +45,10 @@ impl ImageProcessor {
     /// 2. Apply transformations (rotate, mirror, scale)
     /// 3. Dither to 7-color palette
     /// 4. Send to display
+    ///
+    /// Memory optimization: Explicitly drops intermediate buffers to free
+    /// memory before the next allocation. This reduces peak memory usage
+    /// on the Pi Zero W's constrained RAM.
     pub async fn process_and_display(&self, config: &Config) -> Result<(), ProcessingError> {
         if !config.has_image_url() {
             return Err(ProcessingError::NoImageUrl);
@@ -52,10 +56,11 @@ impl ImageProcessor {
 
         tracing::info!("Starting image processing pipeline");
 
-        // Download image
+        // Download image (~1.5MB for 800x480 RGBA)
         let img = download_image(&config.image_url).await?;
 
         // Apply transformations with configurable dimensions and transform order
+        // `img` is consumed here, freeing the original ~1.5MB DynamicImage
         let options = TransformOptions {
             rotation: Rotation::from(config.rotation),
             mirror_h: config.mirror_h,
@@ -66,14 +71,21 @@ impl ImageProcessor {
             target_height: config.display_height,
         };
         let rgb_image = transform_image(img, &options);
+        // Note: `img` is now moved into transform_image and freed
 
-        // Dither to 7-color palette
+        // Dither to 7-color palette (~192KB output for 800x480)
+        // The dither function uses row-by-row processing (~19KB working memory)
         let buffer = dither_image(&rgb_image);
+
+        // Explicitly drop rgb_image (~1.15MB) before display operation
+        // This ensures we have freed as much memory as possible before
+        // the display operation which may also need buffers
+        drop(rgb_image);
 
         // Ensure display is initialized
         self.display.init().await?;
 
-        // Send to display
+        // Send to display - only `buffer` (~192KB) is in memory now
         self.display.display(&buffer).await?;
 
         tracing::info!("Image processing complete");

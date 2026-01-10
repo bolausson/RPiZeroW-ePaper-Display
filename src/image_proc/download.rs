@@ -1,10 +1,31 @@
 //! Image download functionality.
 //!
 //! Handles fetching images from HTTP/HTTPS URLs with retry logic.
+//!
+//! Uses a shared HTTP client to avoid connection pool leaks and reduce
+//! memory overhead from creating new clients for each download.
 
 use image::DynamicImage;
+use once_cell::sync::Lazy;
 use std::time::Duration;
 use thiserror::Error;
+
+/// Shared HTTP client for all downloads
+///
+/// This prevents connection pool leaks and reduces memory overhead
+/// compared to creating a new client for each download request.
+/// Configured with reasonable defaults for an embedded device:
+/// - 30 second timeout
+/// - Single idle connection per host (minimize memory)
+/// - 30 second idle timeout (release connections promptly)
+static HTTP_CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .pool_max_idle_per_host(1) // Minimize idle connections for Pi Zero W
+        .pool_idle_timeout(Duration::from_secs(30))
+        .build()
+        .expect("Failed to create HTTP client")
+});
 
 /// Download errors
 #[derive(Error, Debug)]
@@ -28,8 +49,6 @@ pub enum DownloadError {
 /// Download configuration
 #[derive(Debug, Clone)]
 pub struct DownloadConfig {
-    /// Request timeout
-    pub timeout: Duration,
     /// Maximum number of retry attempts
     pub max_retries: u32,
     /// Base delay between retries (doubled each attempt)
@@ -42,7 +61,6 @@ pub struct DownloadConfig {
 impl Default for DownloadConfig {
     fn default() -> Self {
         Self {
-            timeout: Duration::from_secs(30),
             max_retries: 3,
             retry_delay: Duration::from_secs(2),
             max_width: 4096,
@@ -51,12 +69,14 @@ impl Default for DownloadConfig {
     }
 }
 
-/// Download an image from a URL
+/// Download an image from a URL using the shared HTTP client
 pub async fn download_image(url: &str) -> Result<DynamicImage, DownloadError> {
     download_image_with_config(url, &DownloadConfig::default()).await
 }
 
 /// Download an image from a URL with custom configuration
+///
+/// Uses the shared HTTP client for connection reuse and memory efficiency.
 pub async fn download_image_with_config(
     url: &str,
     config: &DownloadConfig,
@@ -68,11 +88,7 @@ pub async fn download_image_with_config(
 
     tracing::info!("Downloading image from: {}", url);
 
-    let client = reqwest::Client::builder()
-        .timeout(config.timeout)
-        .build()?;
-
-    let bytes: bytes::Bytes = download_with_retry(&client, url, config).await?;
+    let bytes: bytes::Bytes = download_with_retry(&HTTP_CLIENT, url, config).await?;
 
     tracing::debug!("Downloaded {} bytes, decoding image...", bytes.len());
 

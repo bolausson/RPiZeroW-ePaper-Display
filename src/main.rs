@@ -46,7 +46,9 @@ struct Args {
     clear: bool,
 }
 
-#[tokio::main]
+/// Using current_thread runtime for single-core Pi Zero W
+/// This reduces memory overhead and avoids thread synchronization costs
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
@@ -133,11 +135,14 @@ async fn main() -> anyhow::Result<()> {
 }
 
 /// Initialize tracing/logging
+///
+/// Default level is "warn" to minimize SD card wear from log writes.
+/// Use --verbose flag for "debug" level during development/troubleshooting.
 fn init_logging(verbose: bool) {
-    let level = if verbose { "debug" } else { "info" };
+    let level = if verbose { "debug" } else { "warn" };
 
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| format!("epaper_display={},info", level).into());
+        .unwrap_or_else(|_| format!("rpizerow_epaper_display={}", level).into());
 
     tracing_subscriber::registry()
         .with(filter)

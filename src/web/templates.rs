@@ -82,7 +82,7 @@ pub fn render_config_page(config: &Config, status_message: Option<&str>) -> Stri
         <h1>🖼️ Pi Zero W ePaper Display</h1>
         {status_html}
         <div class="status">
-            <strong>Current URL:</strong> {url}<br>
+            <strong>Current URL:</strong> <a href="{url}" target="_blank" rel="noopener" style="color: #1565c0; word-break: break-all;">{url_display}</a><br>
             <strong>Refresh:</strong> {refresh} min &nbsp;|&nbsp;
             <strong>Size:</strong> {display_width}×{display_height} &nbsp;|&nbsp;
             <strong>Rotation:</strong> {rotation}° &nbsp;|&nbsp;
@@ -209,6 +209,7 @@ pub fn render_config_page(config: &Config, status_message: Option<&str>) -> Stri
 </html>"##,
         status_html = status_html,
         url = html_escape(&config.image_url),
+        url_display = truncate_url(&config.image_url, 80),
         refresh = config.refresh_interval_min,
         display_width = config.display_width,
         display_height = config.display_height,
@@ -262,3 +263,11 @@ fn html_escape(s: &str) -> String {
         .replace('"', "&quot;")
 }
 
+fn truncate_url(url: &str, max_len: usize) -> String {
+    let escaped = html_escape(url);
+    if escaped.len() <= max_len {
+        escaped
+    } else {
+        format!("{}…", &escaped[..max_len])
+    }
+}

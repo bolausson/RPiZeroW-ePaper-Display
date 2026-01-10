@@ -7,12 +7,11 @@ description = "E-Paper display server for Raspberry Pi Zero W"
 license = "GPL-3.0"
 
 [dependencies]
-# Async runtime
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "signal"] }
+# Async runtime - using current_thread for single-core Pi Zero W
+tokio = { version = "1", features = ["rt", "macros", "time", "sync", "signal"] }
 
 # Web server
 axum = { version = "0.7", default-features = false, features = ["http1", "tokio", "form"] }
-tower-http = { version = "0.5", features = ["fs", "cors"] }
 
 # Hardware access (GPIO, SPI, etc. are included by default)
 rppal = "0.22"
@@ -39,10 +38,16 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 thiserror = "2"
 anyhow = "1"
 
+# Lazy initialization for shared resources
+once_cell = "1"
+
 [profile.release]
-opt-level = "s"          # Optimize for size
+opt-level = "z"          # Optimize for size (more aggressive than "s")
 lto = true               # Link-time optimization
 codegen-units = 1        # Single codegen unit for better optimization
 panic = "abort"          # Smaller binary, no unwinding
 strip = true             # Strip symbols
+
+[profile.release.package."*"]
+opt-level = "z"          # Also optimize dependencies for size
 

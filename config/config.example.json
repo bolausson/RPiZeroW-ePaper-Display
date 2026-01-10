@@ -1,0 +1,11 @@
+{
+    "image_url": "",
+    "refresh_interval_min": 60,
+    "rotation": 0,
+    "mirror_h": false,
+    "mirror_v": false,
+    "scale_to_fit": true,
+    "web_port": 8888,
+    "verbose": false
+}
+

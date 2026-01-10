@@ -1,0 +1,49 @@
+[Unit]
+Description=E-Paper Display Server
+Documentation=https://github.com/yourusername/RPiZeroW-ePaper-Display
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+
+# Working directory
+WorkingDirectory=/opt/epaper-display
+
+# Start command
+ExecStart=/opt/epaper-display/epaper-display --config /opt/epaper-display/config.json
+
+# Restart behavior
+Restart=on-failure
+RestartSec=10
+
+# Graceful shutdown
+TimeoutStopSec=30
+KillMode=mixed
+KillSignal=SIGTERM
+
+# Environment
+Environment=RUST_LOG=info
+
+# Security hardening (while still allowing hardware access)
+NoNewPrivileges=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/opt/epaper-display
+
+# Allow GPIO and SPI access
+PrivateDevices=false
+DeviceAllow=/dev/spidev0.0 rw
+DeviceAllow=/dev/gpiochip0 rw
+DeviceAllow=/dev/gpiomem rw
+DeviceAllow=/dev/mem rw
+
+# Resource limits
+MemoryMax=128M
+CPUQuota=50%
+
+[Install]
+WantedBy=multi-user.target
+

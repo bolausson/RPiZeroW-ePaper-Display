@@ -1,0 +1,48 @@
+[package]
+name = "rpizerow-epaper-display"
+version = "0.1.0"
+edition = "2024"
+authors = ["bolausson"]
+description = "E-Paper display server for Raspberry Pi Zero W"
+license = "GPL-3.0"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "signal"] }
+
+# Web server
+axum = { version = "0.7", default-features = false, features = ["http1", "tokio", "form"] }
+tower-http = { version = "0.5", features = ["fs", "cors"] }
+
+# Hardware access (GPIO, SPI, etc. are included by default)
+rppal = "0.22"
+
+# HTTP client for image download
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+bytes = "1"
+
+# Image processing
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# CLI argument parsing
+clap = { version = "4", features = ["derive"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+[profile.release]
+opt-level = "s"          # Optimize for size
+lto = true               # Link-time optimization
+codegen-units = 1        # Single codegen unit for better optimization
+panic = "abort"          # Smaller binary, no unwinding
+strip = true             # Strip symbols
+

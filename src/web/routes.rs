@@ -1,14 +1,14 @@
 //! HTTP route handlers for the web interface.
 
 use super::templates;
-use crate::config::Config;
+use crate::config::{Config, SchedulePeriod};
 use crate::image_proc::ImageProcessor;
 use axum::{
     extract::{Form, Path, State},
     http::StatusCode,
     response::{Html, IntoResponse},
 };
-use serde::Deserialize;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -20,25 +20,8 @@ pub struct AppState {
     pub config_path: String,
 }
 
-/// Form data for configuration update
-#[derive(Debug, Deserialize)]
-pub struct ConfigForm {
-    pub image_url: String,
-    pub refresh_interval_min: u32,
-    #[serde(default = "default_display_width")]
-    pub display_width: u32,
-    #[serde(default = "default_display_height")]
-    pub display_height: u32,
-    pub rotation: u16,
-    #[serde(default)]
-    pub rotate_first: Option<String>,
-    #[serde(default)]
-    pub mirror_h: Option<String>,
-    #[serde(default)]
-    pub mirror_v: Option<String>,
-    #[serde(default)]
-    pub scale_to_fit: Option<String>,
-}
+/// Form data is captured as a HashMap to handle dynamic schedule fields
+type FormData = HashMap<String, String>;
 
 fn default_display_width() -> u32 {
     800
@@ -46,6 +29,45 @@ fn default_display_width() -> u32 {
 
 fn default_display_height() -> u32 {
     480
+}
+
+/// Parse schedule periods from form data
+fn parse_schedule_from_form(form: &FormData) -> Result<Vec<SchedulePeriod>, String> {
+    let mut periods = Vec::new();
+
+    // Find all schedule indices by looking for schedule_start_* fields
+    let mut indices: Vec<usize> = form
+        .keys()
+        .filter_map(|k| {
+            k.strip_prefix("schedule_start_")
+                .and_then(|s| s.parse::<usize>().ok())
+        })
+        .collect();
+    indices.sort();
+
+    for i in &indices {
+        let start = form
+            .get(&format!("schedule_start_{}", i))
+            .ok_or_else(|| format!("Missing start time for period {}", i))?;
+        let end = form
+            .get(&format!("schedule_end_{}", i))
+            .ok_or_else(|| format!("Missing end time for period {}", i))?;
+        let interval_str = form
+            .get(&format!("schedule_interval_{}", i))
+            .ok_or_else(|| format!("Missing interval for period {}", i))?;
+
+        let interval: u32 = interval_str
+            .parse()
+            .map_err(|_| format!("Invalid interval '{}' for period {}", interval_str, i))?;
+
+        periods.push(SchedulePeriod::new(start, end, interval));
+    }
+
+    if periods.is_empty() {
+        return Err("At least one schedule period is required".to_string());
+    }
+
+    Ok(periods)
 }
 
 /// GET / - Main configuration page
@@ -57,7 +79,7 @@ pub async fn index(State(state): State<AppState>) -> Html<String> {
 /// POST /save - Save configuration
 pub async fn save_config(
     State(state): State<AppState>,
-    Form(form): Form<ConfigForm>,
+    Form(form): Form<FormData>,
 ) -> impl IntoResponse {
     match update_config(&state, &form).await {
         Ok(_) => {
@@ -77,7 +99,7 @@ pub async fn save_config(
 /// POST /apply - Save configuration and refresh display
 pub async fn save_and_apply(
     State(state): State<AppState>,
-    Form(form): Form<ConfigForm>,
+    Form(form): Form<FormData>,
 ) -> impl IntoResponse {
     // Save config first
     if let Err(e) = update_config(&state, &form).await {
@@ -147,24 +169,38 @@ pub async fn health() -> impl IntoResponse {
     (StatusCode::OK, "OK")
 }
 
+/// Helper to get a form field with a default value
+fn get_form_field<'a>(form: &'a FormData, key: &str, default: &'a str) -> &'a str {
+    form.get(key).map(|s| s.as_str()).unwrap_or(default)
+}
+
+/// Helper to parse a form field as a number
+fn parse_form_field<T: std::str::FromStr>(form: &FormData, key: &str, default: T) -> T {
+    form.get(key)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(default)
+}
+
 /// Update configuration from form data
-async fn update_config(state: &AppState, form: &ConfigForm) -> Result<(), String> {
+async fn update_config(state: &AppState, form: &FormData) -> Result<(), String> {
     let mut config = state.config.write().await;
 
-    config.image_url = form.image_url.clone();
-    config.refresh_interval_min = form.refresh_interval_min;
-    config.display_width = form.display_width;
-    config.display_height = form.display_height;
-    config.rotation = form.rotation;
-    // rotate_first: "1" = true, "0" = false, parse the value
-    config.rotate_first = form
-        .rotate_first
-        .as_ref()
-        .map(|v| v == "1")
-        .unwrap_or(true);
-    config.mirror_h = form.mirror_h.is_some();
-    config.mirror_v = form.mirror_v.is_some();
-    config.scale_to_fit = form.scale_to_fit.is_some();
+    // Parse basic fields
+    config.image_url = get_form_field(form, "image_url", "").to_string();
+    config.display_width = parse_form_field(form, "display_width", default_display_width());
+    config.display_height = parse_form_field(form, "display_height", default_display_height());
+    config.rotation = parse_form_field(form, "rotation", 0);
+
+    // rotate_first: "1" = true, "0" = false
+    config.rotate_first = get_form_field(form, "rotate_first", "1") == "1";
+
+    // Checkboxes: present = checked
+    config.mirror_h = form.contains_key("mirror_h");
+    config.mirror_v = form.contains_key("mirror_v");
+    config.scale_to_fit = form.contains_key("scale_to_fit");
+
+    // Parse schedule periods
+    config.schedule = parse_schedule_from_form(form)?;
 
     // Validate
     config.validate().map_err(|e| e.to_string())?;
@@ -175,4 +211,3 @@ async fn update_config(state: &AppState, form: &ConfigForm) -> Result<(), String
     tracing::info!("Configuration saved to {}", state.config_path);
     Ok(())
 }
-

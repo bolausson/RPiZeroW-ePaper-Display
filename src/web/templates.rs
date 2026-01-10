@@ -2,13 +2,52 @@
 //!
 //! Embedded HTML templates for the configuration UI.
 
-use crate::config::Config;
+use crate::config::{Config, SchedulePeriod};
+
+/// Generate HTML for the schedule table rows
+fn render_schedule_rows(schedule: &[SchedulePeriod]) -> String {
+    schedule
+        .iter()
+        .enumerate()
+        .map(|(i, period)| {
+            format!(
+                r#"<tr class="schedule-row">
+                    <td><input type="time" name="schedule_start_{i}" value="{start}" required></td>
+                    <td><input type="time" name="schedule_end_{i}" value="{end}" required></td>
+                    <td><input type="number" name="schedule_interval_{i}" value="{interval}" min="1" max="1440" required style="width:80px"></td>
+                    <td><button type="button" class="btn-small btn-red" onclick="removeScheduleRow(this)" title="Remove">✕</button></td>
+                </tr>"#,
+                i = i,
+                start = &period.start_time,
+                end = &period.end_time,
+                interval = period.interval_min
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Get the current active period info for display
+fn get_active_period_info(config: &Config) -> String {
+    if let Some(period) = config.get_current_period() {
+        format!(
+            "{} - {} (every {} min)",
+            period.start_time, period.end_time, period.interval_min
+        )
+    } else {
+        "No active period".to_string()
+    }
+}
 
 /// Render the main configuration page
 pub fn render_config_page(config: &Config, status_message: Option<&str>) -> String {
     let status_html = status_message
         .map(|msg| format!(r#"<div class="alert">{}</div>"#, msg))
         .unwrap_or_default();
+
+    let schedule_rows = render_schedule_rows(&config.schedule);
+    let active_period = get_active_period_info(config);
+    let current_interval = config.get_current_interval();
 
     format!(
         r##"<!DOCTYPE html>
@@ -19,12 +58,12 @@ pub fn render_config_page(config: &Config, status_message: Option<&str>) -> Stri
     <title>Pi Zero W ePaper Display</title>
     <style>
         * {{ box-sizing: border-box; }}
-        body {{ 
+        body {{
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             margin: 0; padding: 20px; background: #f5f5f5;
         }}
-        .container {{ 
-            max-width: 600px; margin: 0 auto; background: white;
+        .container {{
+            max-width: 700px; margin: 0 auto; background: white;
             padding: 24px; border-radius: 12px;
             box-shadow: 0 2px 8px rgba(0,0,0,0.1);
         }}
@@ -34,24 +73,24 @@ pub fn render_config_page(config: &Config, status_message: Option<&str>) -> Stri
             margin-bottom: 20px; font-size: 14px;
             word-break: break-word; overflow-wrap: break-word;
         }}
-        .alert {{ 
+        .alert {{
             background: #c8e6c9; padding: 12px; border-radius: 8px;
             margin-bottom: 16px; color: #2e7d32;
         }}
         label {{ display: block; margin-top: 16px; font-weight: 600; color: #555; }}
-        input, select {{ 
+        input, select {{
             width: 100%; padding: 12px; margin-top: 6px;
             border: 1px solid #ddd; border-radius: 8px;
             font-size: 16px;
         }}
         input:focus, select:focus {{ outline: none; border-color: #2196F3; }}
         .checkbox-group {{ display: flex; gap: 20px; margin-top: 8px; }}
-        .checkbox-group label {{ 
+        .checkbox-group label {{
             display: flex; align-items: center; gap: 8px;
             font-weight: normal; margin-top: 0;
         }}
         .buttons {{ display: flex; gap: 10px; margin-top: 24px; flex-wrap: wrap; }}
-        button {{ 
+        button {{
             padding: 12px 24px; border: none; border-radius: 8px;
             font-size: 16px; cursor: pointer; font-weight: 600;
         }}
@@ -59,6 +98,8 @@ pub fn render_config_page(config: &Config, status_message: Option<&str>) -> Stri
         .btn-blue {{ background: #2196F3; color: white; }}
         .btn-orange {{ background: #FF9800; color: white; }}
         .btn-red {{ background: #f44336; color: white; }}
+        .btn-small {{ padding: 6px 12px; font-size: 14px; }}
+        .btn-gray {{ background: #9e9e9e; color: white; }}
         button:hover {{ opacity: 0.9; }}
         hr {{ border: none; border-top: 1px solid #eee; margin: 24px 0; }}
         .actions {{ display: flex; gap: 10px; flex-wrap: wrap; }}
@@ -75,6 +116,15 @@ pub fn render_config_page(config: &Config, status_message: Option<&str>) -> Stri
         details summary:hover {{ color: #333; }}
         .row {{ display: flex; gap: 10px; }}
         .row input {{ flex: 1; }}
+        /* Schedule table styles */
+        .schedule-table {{ width: 100%; border-collapse: collapse; margin-top: 8px; }}
+        .schedule-table th {{ text-align: left; padding: 8px; background: #f5f5f5; font-size: 13px; }}
+        .schedule-table td {{ padding: 6px; }}
+        .schedule-table input[type="time"] {{ width: 110px; padding: 8px; }}
+        .schedule-table input[type="number"] {{ width: 80px; padding: 8px; }}
+        .schedule-controls {{ display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }}
+        .preset-btn {{ padding: 6px 12px; font-size: 12px; background: #e0e0e0; color: #333; }}
+        .active-period {{ background: #e8f5e9; padding: 8px 12px; border-radius: 6px; margin-top: 8px; font-size: 13px; }}
     </style>
 </head>
 <body>
@@ -83,19 +133,38 @@ pub fn render_config_page(config: &Config, status_message: Option<&str>) -> Stri
         {status_html}
         <div class="status">
             <strong>Current URL:</strong> <a href="{url}" target="_blank" rel="noopener" style="color: #1565c0; word-break: break-all;">{url_display}</a><br>
-            <strong>Refresh:</strong> {refresh} min &nbsp;|&nbsp;
+            <strong>Active Schedule:</strong> {active_period} &nbsp;|&nbsp;
+            <strong>Current Interval:</strong> {current_interval} min<br>
             <strong>Size:</strong> {display_width}×{display_height} &nbsp;|&nbsp;
             <strong>Rotation:</strong> {rotation}° &nbsp;|&nbsp;
             <strong>Order:</strong> {transform_order}
         </div>
-        <form method="POST" action="/save">
+        <form method="POST" action="/save" id="configForm">
             <label>Image URL:</label>
             <input type="url" name="image_url" value="{url}" placeholder="https://example.com/image.png">
             <div class="help-text">URL to a PNG image (800×480 recommended). Supports HTTP/HTTPS.</div>
 
-            <label>Refresh Interval (minutes):</label>
-            <input type="number" name="refresh_interval_min" value="{refresh}" min="1" max="1440">
-            <div class="help-text">How often to automatically download and display a new image (1-1440 min).</div>
+            <label>Refresh Schedule:</label>
+            <table class="schedule-table" id="scheduleTable">
+                <thead>
+                    <tr>
+                        <th>Start Time</th>
+                        <th>End Time</th>
+                        <th>Interval (min)</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody id="scheduleBody">
+                    {schedule_rows}
+                </tbody>
+            </table>
+            <div class="schedule-controls">
+                <button type="button" class="btn-small btn-blue" onclick="addScheduleRow()">+ Add Period</button>
+                <button type="button" class="btn-small preset-btn" onclick="setPreset('simple')">Simple (24h)</button>
+                <button type="button" class="btn-small preset-btn" onclick="setPreset('daynight')">Day/Night</button>
+                <button type="button" class="btn-small preset-btn" onclick="setPreset('work')">Work Hours</button>
+            </div>
+            <div class="help-text">Define time periods with different refresh intervals. Periods must cover all 24 hours without gaps or overlaps. Use 00:00-00:00 for a single 24-hour period.</div>
 
             <label>Display Dimensions:</label>
             <div class="row">
@@ -151,8 +220,8 @@ pub fn render_config_page(config: &Config, status_message: Option<&str>) -> Stri
                     <dt>Image URL</dt>
                     <dd>The URL to download the image from. PNG format is recommended. For best results, use images matching the configured display dimensions. Works well with Grafana render URLs for dashboards.</dd>
 
-                    <dt>Refresh Interval</dt>
-                    <dd>How often (in minutes) the display automatically updates. The system downloads a fresh image at this interval. Set to a higher value for static content or lower for frequently changing data like dashboards.</dd>
+                    <dt>Refresh Schedule</dt>
+                    <dd>Define time-based refresh intervals. Each period specifies a start time, end time, and refresh interval in minutes. Periods must cover all 24 hours without gaps or overlaps. Use 00:00-00:00 for a single 24-hour period. Presets: <strong>Simple</strong> (one 60-min interval), <strong>Day/Night</strong> (faster during day), <strong>Work Hours</strong> (fastest during work hours).</dd>
 
                     <dt>Display Dimensions</dt>
                     <dd>Target width and height in pixels. Default is 800×480 for the 7.3" e-paper display. Images will be scaled/transformed to fit these dimensions before dithering.</dd>
@@ -205,12 +274,64 @@ pub fn render_config_page(config: &Config, status_message: Option<&str>) -> Stri
             </div>
         </details>
     </div>
+    <script>
+    let rowCounter = {schedule_count};
+
+    function addScheduleRow(start, end, interval) {{
+        start = start || '00:00';
+        end = end || '00:00';
+        interval = interval || 60;
+        const tbody = document.getElementById('scheduleBody');
+        const tr = document.createElement('tr');
+        tr.className = 'schedule-row';
+        tr.innerHTML = `
+            <td><input type="time" name="schedule_start_${{rowCounter}}" value="${{start}}" required></td>
+            <td><input type="time" name="schedule_end_${{rowCounter}}" value="${{end}}" required></td>
+            <td><input type="number" name="schedule_interval_${{rowCounter}}" value="${{interval}}" min="1" max="1440" required style="width:80px"></td>
+            <td><button type="button" class="btn-small btn-red" onclick="removeScheduleRow(this)" title="Remove">✕</button></td>
+        `;
+        tbody.appendChild(tr);
+        rowCounter++;
+    }}
+
+    function removeScheduleRow(btn) {{
+        const tbody = document.getElementById('scheduleBody');
+        if (tbody.querySelectorAll('.schedule-row').length > 1) {{
+            btn.closest('tr').remove();
+        }} else {{
+            alert('At least one schedule period is required.');
+        }}
+    }}
+
+    function clearSchedule() {{
+        const tbody = document.getElementById('scheduleBody');
+        tbody.innerHTML = '';
+        rowCounter = 0;
+    }}
+
+    function setPreset(preset) {{
+        clearSchedule();
+        if (preset === 'simple') {{
+            addScheduleRow('00:00', '00:00', 60);
+        }} else if (preset === 'daynight') {{
+            addScheduleRow('06:00', '22:00', 30);
+            addScheduleRow('22:00', '06:00', 120);
+        }} else if (preset === 'work') {{
+            addScheduleRow('00:00', '07:00', 120);
+            addScheduleRow('07:00', '19:00', 15);
+            addScheduleRow('19:00', '00:00', 60);
+        }}
+    }}
+    </script>
 </body>
 </html>"##,
         status_html = status_html,
         url = html_escape(&config.image_url),
         url_display = truncate_url(&config.image_url, 80),
-        refresh = config.refresh_interval_min,
+        schedule_rows = schedule_rows,
+        schedule_count = config.schedule.len(),
+        active_period = active_period,
+        current_interval = current_interval,
         display_width = config.display_width,
         display_height = config.display_height,
         rotation = config.rotation,

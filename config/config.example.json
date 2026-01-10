@@ -1,11 +1,19 @@
 {
     "image_url": "",
-    "refresh_interval_min": 60,
+    "schedule": [
+        {
+            "start_time": "00:00",
+            "end_time": "00:00",
+            "interval_min": 60
+        }
+    ],
     "rotation": 0,
     "mirror_h": false,
     "mirror_v": false,
     "scale_to_fit": true,
+    "rotate_first": true,
+    "display_width": 800,
+    "display_height": 480,
     "web_port": 8888,
     "verbose": false
 }
-

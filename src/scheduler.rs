@@ -61,10 +61,21 @@ impl Scheduler {
         self.refresh_display().await;
 
         loop {
-            // Get current interval from config, with backoff applied
+            // Get current interval from config based on time of day, with backoff applied
             let interval = {
                 let config = self.config.read().await;
-                let base_interval = Duration::from_secs(config.refresh_interval_min as u64 * 60);
+                let current_interval = config.get_current_interval();
+                let base_interval = Duration::from_secs(current_interval as u64 * 60);
+
+                if let Some(period) = config.get_current_period() {
+                    tracing::debug!(
+                        "Active schedule: {} - {} (every {} min)",
+                        period.start_time,
+                        period.end_time,
+                        period.interval_min
+                    );
+                }
+
                 self.get_effective_interval(base_interval)
             };
 
@@ -183,10 +194,11 @@ impl SchedulerWithTrigger {
         self.inner.refresh_display().await;
 
         loop {
-            // Get effective interval (with backoff applied)
+            // Get effective interval based on time of day (with backoff applied)
             let interval = {
                 let config = self.inner.config.read().await;
-                let base_interval = Duration::from_secs(config.refresh_interval_min as u64 * 60);
+                let current_interval = config.get_current_interval();
+                let base_interval = Duration::from_secs(current_interval as u64 * 60);
                 self.inner.get_effective_interval(base_interval)
             };
 

@@ -5,13 +5,15 @@ A lightweight, memory-efficient Rust application that turns a Raspberry Pi Zero 
 ## Features
 
 - **Web Configuration Interface** — Configure image URL, refresh schedule, rotation, and mirroring from any browser
-- **Time-Based Refresh Scheduling** — Configure different refresh intervals for different times of day (e.g., faster updates during work hours, slower at night)
+- **Multiple Schedule Plans** — Create named schedule plans (e.g., "Weekday", "Weekend") with different refresh intervals
+- **Per-Day Schedule Assignment** — Assign different schedule plans to each day of the week
+- **Time-Based Refresh Scheduling** — Configure different refresh intervals for different times of day within each plan
 - **Schedule Presets** — Quick setup with Simple (24h), Day/Night, or Work Hours presets
 - **Image Processing Pipeline** — Automatic scaling, rotation, mirroring, and Floyd-Steinberg dithering to the 6-color palette
 - **Grafana Integration** — Perfect for displaying dashboards, weather data, or any rendered image
 - **Resource Efficient** — Optimized for the Pi Zero W's limited resources (~3MB binary, minimal memory footprint)
 - **Systemd Service** — Runs as a background service with automatic startup
-- **Backward Compatible** — Automatically migrates legacy single-interval configurations to the new schedule format
+- **Backward Compatible** — Automatically migrates legacy configurations to the new schedule format
 
 ## Web Interface
 
@@ -19,8 +21,10 @@ A lightweight, memory-efficient Rust application that turns a Raspberry Pi Zero 
 
 Configure the display through a clean, mobile-friendly web interface. Features include:
 - Image URL configuration with HTTP/HTTPS support
-- Time-based refresh scheduling with multiple periods
-- Schedule presets for common use cases
+- Multiple named schedule plans with tabbed interface
+- Per-day schedule assignment with visual day-of-week grid
+- Time-based refresh periods within each plan
+- Schedule presets for common use cases (Simple, Day/Night, Work Hours)
 - Configurable display dimensions
 - Rotation (0°, 90°, 180°, 270°)
 - Horizontal and vertical mirroring
@@ -59,9 +63,23 @@ Configure the display through a clean, mobile-friendly web interface. Features i
    ```json
    {
      "image_url": "",
-     "schedule": [
-       { "start_time": "00:00", "end_time": "00:00", "interval_min": 60 }
+     "schedule_plans": [
+       {
+         "name": "Default",
+         "periods": [
+           { "start_time": "00:00", "end_time": "00:00", "interval_min": 60 }
+         ]
+       }
      ],
+     "day_assignments": {
+       "Mon": "Default",
+       "Tue": "Default",
+       "Wed": "Default",
+       "Thu": "Default",
+       "Fri": "Default",
+       "Sat": "Default",
+       "Sun": "Default"
+     },
      "rotation": 0,
      "mirror_h": false,
      "mirror_v": false,
@@ -105,7 +123,8 @@ sudo systemctl start epaper-display
 | Setting | Description | Default |
 |---------|-------------|---------|
 | `image_url` | URL to fetch the image from | `""` |
-| `schedule` | Array of time-based refresh periods (see below) | 60 min, 24h |
+| `schedule_plans` | Array of named schedule plans (see below) | Single "Default" plan |
+| `day_assignments` | Map of weekday to schedule plan name | All days → "Default" |
 | `display_width` | Target display width in pixels | `800` |
 | `display_height` | Target display height in pixels | `480` |
 | `rotation` | Image rotation (0, 90, 180, 270) | `0` |
@@ -113,34 +132,75 @@ sudo systemctl start epaper-display
 | `mirror_h` | Mirror image horizontally | `false` |
 | `mirror_v` | Mirror image vertically | `false` |
 | `scale_to_fit` | Scale image to fill display | `true` |
+| `web_port` | Web server port | `8888` |
+| `verbose` | Enable verbose logging | `false` |
 
-### Schedule Configuration
+### Schedule Plans
 
-The `schedule` array defines time-based refresh intervals. Each period specifies:
-- `start_time` — Start time in HH:MM format (24-hour)
-- `end_time` — End time in HH:MM format (24-hour)
-- `interval_min` — Refresh interval in minutes for this period
+Schedule plans allow you to define different refresh schedules and assign them to specific days of the week. Each plan contains an array of time-based periods.
 
-Periods must cover all 24 hours without gaps or overlaps. Use `00:00` to `00:00` for a single 24-hour period.
+**Schedule Plan Structure:**
+- `name` — Unique name for the plan (e.g., "Weekday", "Weekend")
+- `periods` — Array of time periods, each with:
+  - `start_time` — Start time in HH:MM format (24-hour)
+  - `end_time` — End time in HH:MM format (24-hour)
+  - `interval_min` — Refresh interval in minutes for this period
 
-**Example: Day/Night Schedule**
+Periods within a plan must cover all 24 hours without gaps or overlaps. Use `00:00` to `00:00` for a single 24-hour period.
+
+**Example: Weekday/Weekend Schedules**
 ```json
 {
-  "schedule": [
-    { "start_time": "06:00", "end_time": "22:00", "interval_min": 10 },
-    { "start_time": "22:00", "end_time": "06:00", "interval_min": 30 }
-  ]
+  "schedule_plans": [
+    {
+      "name": "Weekday",
+      "periods": [
+        { "start_time": "06:00", "end_time": "09:00", "interval_min": 5 },
+        { "start_time": "09:00", "end_time": "18:00", "interval_min": 15 },
+        { "start_time": "18:00", "end_time": "22:00", "interval_min": 10 },
+        { "start_time": "22:00", "end_time": "06:00", "interval_min": 60 }
+      ]
+    },
+    {
+      "name": "Weekend",
+      "periods": [
+        { "start_time": "08:00", "end_time": "23:00", "interval_min": 30 },
+        { "start_time": "23:00", "end_time": "08:00", "interval_min": 120 }
+      ]
+    }
+  ],
+  "day_assignments": {
+    "Mon": "Weekday",
+    "Tue": "Weekday",
+    "Wed": "Weekday",
+    "Thu": "Weekday",
+    "Fri": "Weekday",
+    "Sat": "Weekend",
+    "Sun": "Weekend"
+  }
 }
 ```
 
-**Example: Work Hours Schedule**
+**Example: Simple 24-Hour Schedule**
 ```json
 {
-  "schedule": [
-    { "start_time": "00:00", "end_time": "07:00", "interval_min": 120 },
-    { "start_time": "07:00", "end_time": "19:00", "interval_min": 15 },
-    { "start_time": "19:00", "end_time": "00:00", "interval_min": 60 }
-  ]
+  "schedule_plans": [
+    {
+      "name": "Default",
+      "periods": [
+        { "start_time": "00:00", "end_time": "00:00", "interval_min": 60 }
+      ]
+    }
+  ],
+  "day_assignments": {
+    "Mon": "Default",
+    "Tue": "Default",
+    "Wed": "Default",
+    "Thu": "Default",
+    "Fri": "Default",
+    "Sat": "Default",
+    "Sun": "Default"
+  }
 }
 ```
 

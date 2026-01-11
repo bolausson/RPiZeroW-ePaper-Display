@@ -2,14 +2,85 @@
 //!
 //! Handles loading, saving, and validating configuration from JSON files.
 
-use chrono::Timelike;
+use chrono::{Datelike, Timelike};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::Path;
 use thiserror::Error;
 
 /// Default configuration file path
 #[allow(dead_code)]
 pub const DEFAULT_CONFIG_PATH: &str = "/opt/epaper-display/config.json";
+
+/// Type alias for day-of-week to schedule plan name mapping
+pub type DayAssignments = HashMap<Weekday, String>;
+
+/// Days of the week
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Weekday {
+    Monday,
+    Tuesday,
+    Wednesday,
+    Thursday,
+    Friday,
+    Saturday,
+    Sunday,
+}
+
+impl Weekday {
+    /// Get all weekdays in order
+    pub fn all() -> &'static [Weekday] {
+        &[
+            Weekday::Monday,
+            Weekday::Tuesday,
+            Weekday::Wednesday,
+            Weekday::Thursday,
+            Weekday::Friday,
+            Weekday::Saturday,
+            Weekday::Sunday,
+        ]
+    }
+
+    /// Get display name for the weekday
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Weekday::Monday => "Monday",
+            Weekday::Tuesday => "Tuesday",
+            Weekday::Wednesday => "Wednesday",
+            Weekday::Thursday => "Thursday",
+            Weekday::Friday => "Friday",
+            Weekday::Saturday => "Saturday",
+            Weekday::Sunday => "Sunday",
+        }
+    }
+
+    /// Get short name for the weekday
+    pub fn short_name(&self) -> &'static str {
+        match self {
+            Weekday::Monday => "Mon",
+            Weekday::Tuesday => "Tue",
+            Weekday::Wednesday => "Wed",
+            Weekday::Thursday => "Thu",
+            Weekday::Friday => "Fri",
+            Weekday::Saturday => "Sat",
+            Weekday::Sunday => "Sun",
+        }
+    }
+
+    /// Convert from chrono::Weekday
+    pub fn from_chrono(wd: chrono::Weekday) -> Self {
+        match wd {
+            chrono::Weekday::Mon => Weekday::Monday,
+            chrono::Weekday::Tue => Weekday::Tuesday,
+            chrono::Weekday::Wed => Weekday::Wednesday,
+            chrono::Weekday::Thu => Weekday::Thursday,
+            chrono::Weekday::Fri => Weekday::Friday,
+            chrono::Weekday::Sat => Weekday::Saturday,
+            chrono::Weekday::Sun => Weekday::Sunday,
+        }
+    }
+}
 
 /// Configuration errors
 #[derive(Error, Debug)]
@@ -119,9 +190,167 @@ impl SchedulePeriod {
     }
 }
 
-/// Default schedule: single period covering 24 hours with 60-minute refresh
-fn default_schedule() -> Vec<SchedulePeriod> {
-    vec![SchedulePeriod::new("00:00", "00:00", 60)]
+/// A named schedule plan containing multiple time periods
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SchedulePlan {
+    /// Name of the schedule plan (e.g., "Weekday", "Weekend")
+    pub name: String,
+    /// Time periods within this plan
+    pub periods: Vec<SchedulePeriod>,
+}
+
+impl SchedulePlan {
+    /// Create a new schedule plan
+    pub fn new(name: &str, periods: Vec<SchedulePeriod>) -> Self {
+        Self {
+            name: name.to_string(),
+            periods,
+        }
+    }
+
+    /// Create a default schedule plan
+    pub fn default_plan() -> Self {
+        Self {
+            name: "Default".to_string(),
+            periods: vec![SchedulePeriod::new("00:00", "00:00", 60)],
+        }
+    }
+
+    /// Validate this schedule plan
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        if self.name.trim().is_empty() {
+            return Err(ConfigError::ValidationError(
+                "Schedule plan name cannot be empty".to_string(),
+            ));
+        }
+
+        if self.periods.is_empty() {
+            return Err(ConfigError::ValidationError(format!(
+                "Schedule plan '{}' must have at least one period",
+                self.name
+            )));
+        }
+
+        for (i, period) in self.periods.iter().enumerate() {
+            period.validate().map_err(|e| {
+                ConfigError::ValidationError(format!(
+                    "Plan '{}' period {}: {}",
+                    self.name,
+                    i + 1,
+                    e
+                ))
+            })?;
+        }
+
+        // Validate coverage for this plan
+        self.validate_coverage()?;
+
+        Ok(())
+    }
+
+    /// Validate that this plan's periods cover all 24 hours
+    fn validate_coverage(&self) -> Result<(), ConfigError> {
+        // Special case: single period from 00:00 to 00:00 covers full day
+        if self.periods.len() == 1
+            && self.periods[0].start_time == "00:00"
+            && self.periods[0].end_time == "00:00"
+        {
+            return Ok(());
+        }
+
+        // Check each minute of the day is covered by exactly one period
+        let mut coverage = vec![false; 1440];
+
+        for period in &self.periods {
+            let start = period.start_minutes()?;
+            let end = period.end_minutes()?;
+
+            if period.spans_midnight()? {
+                for minute in start..1440 {
+                    if coverage[minute as usize] {
+                        return Err(ConfigError::ValidationError(format!(
+                            "Plan '{}': Overlapping schedule at {:02}:{:02}",
+                            self.name,
+                            minute / 60,
+                            minute % 60
+                        )));
+                    }
+                    coverage[minute as usize] = true;
+                }
+                for minute in 0..end {
+                    if coverage[minute as usize] {
+                        return Err(ConfigError::ValidationError(format!(
+                            "Plan '{}': Overlapping schedule at {:02}:{:02}",
+                            self.name,
+                            minute / 60,
+                            minute % 60
+                        )));
+                    }
+                    coverage[minute as usize] = true;
+                }
+            } else {
+                for minute in start..end {
+                    if coverage[minute as usize] {
+                        return Err(ConfigError::ValidationError(format!(
+                            "Plan '{}': Overlapping schedule at {:02}:{:02}",
+                            self.name,
+                            minute / 60,
+                            minute % 60
+                        )));
+                    }
+                    coverage[minute as usize] = true;
+                }
+            }
+        }
+
+        // Check for gaps
+        for (minute, &covered) in coverage.iter().enumerate() {
+            if !covered {
+                return Err(ConfigError::ValidationError(format!(
+                    "Plan '{}': Schedule gap at {:02}:{:02}",
+                    self.name,
+                    minute / 60,
+                    minute % 60
+                )));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Get the interval for a specific time (minutes since midnight)
+    pub fn get_interval_for_time(&self, time_minutes: u32) -> u32 {
+        for period in &self.periods {
+            if let Ok(true) = period.contains_time(time_minutes) {
+                return period.interval_min;
+            }
+        }
+        self.periods.first().map(|p| p.interval_min).unwrap_or(60)
+    }
+
+    /// Get the active period for a specific time
+    pub fn get_period_for_time(&self, time_minutes: u32) -> Option<&SchedulePeriod> {
+        for period in &self.periods {
+            if let Ok(true) = period.contains_time(time_minutes) {
+                return Some(period);
+            }
+        }
+        self.periods.first()
+    }
+}
+
+/// Default schedule plans
+fn default_schedule_plans() -> Vec<SchedulePlan> {
+    vec![SchedulePlan::default_plan()]
+}
+
+/// Default day assignments (all days use "Default" plan)
+fn default_day_assignments() -> DayAssignments {
+    let mut map = DayAssignments::new();
+    for day in Weekday::all() {
+        map.insert(*day, "Default".to_string());
+    }
+    map
 }
 
 /// Application configuration
@@ -132,13 +361,22 @@ pub struct Config {
     pub image_url: String,
 
     /// Legacy: Refresh interval in minutes (for backward compatibility)
-    /// Will be migrated to schedule on load
+    /// Will be migrated to schedule_plans on load
     #[serde(default, skip_serializing)]
     pub refresh_interval_min: Option<u32>,
 
-    /// Time-based refresh schedule
-    #[serde(default = "default_schedule")]
-    pub schedule: Vec<SchedulePeriod>,
+    /// Legacy: Single schedule array (for backward compatibility)
+    /// Will be migrated to schedule_plans on load
+    #[serde(default, skip_serializing)]
+    pub schedule: Option<Vec<SchedulePeriod>>,
+
+    /// Named schedule plans
+    #[serde(default = "default_schedule_plans")]
+    pub schedule_plans: Vec<SchedulePlan>,
+
+    /// Day-of-week to schedule plan assignments
+    #[serde(default = "default_day_assignments")]
+    pub day_assignments: DayAssignments,
 
     /// Display rotation in degrees (0, 90, 180, 270)
     #[serde(default)]
@@ -198,7 +436,9 @@ impl Default for Config {
         Self {
             image_url: String::new(),
             refresh_interval_min: None,
-            schedule: default_schedule(),
+            schedule: None,
+            schedule_plans: default_schedule_plans(),
+            day_assignments: default_day_assignments(),
             rotation: 0,
             mirror_h: false,
             mirror_v: false,
@@ -218,8 +458,8 @@ impl Config {
         let content = std::fs::read_to_string(path)?;
         let mut config: Config = serde_json::from_str(&content)?;
 
-        // Migrate legacy refresh_interval_min to schedule if needed
-        config.migrate_legacy_interval();
+        // Migrate legacy configurations to new format
+        config.migrate_legacy_config();
 
         config.validate()?;
         Ok(config)
@@ -263,42 +503,93 @@ impl Config {
         self.save(DEFAULT_CONFIG_PATH)
     }
 
-    /// Migrate legacy refresh_interval_min to new schedule format
-    fn migrate_legacy_interval(&mut self) {
+    /// Migrate legacy configurations to new format
+    fn migrate_legacy_config(&mut self) {
+        let mut migrated = false;
+
+        // Check if we need to migrate from old single-schedule format
+        if let Some(schedule) = self.schedule.take() {
+            if !schedule.is_empty() {
+                // Check if schedule_plans is default (single Default plan)
+                let is_default_plans = self.schedule_plans.len() == 1
+                    && self.schedule_plans[0].name == "Default"
+                    && self.schedule_plans[0].periods.len() == 1
+                    && self.schedule_plans[0].periods[0].start_time == "00:00"
+                    && self.schedule_plans[0].periods[0].end_time == "00:00"
+                    && self.schedule_plans[0].periods[0].interval_min == 60;
+
+                if is_default_plans {
+                    tracing::info!("Migrating legacy schedule array to schedule_plans");
+                    self.schedule_plans = vec![SchedulePlan::new("Default", schedule)];
+                    migrated = true;
+                }
+            }
+        }
+
+        // Migrate legacy refresh_interval_min
         if let Some(interval) = self.refresh_interval_min.take() {
-            // Only migrate if schedule is empty or default
-            if self.schedule.is_empty()
-                || (self.schedule.len() == 1
-                    && self.schedule[0].start_time == "00:00"
-                    && self.schedule[0].end_time == "00:00"
-                    && self.schedule[0].interval_min == 60)
-            {
+            let is_default_plans = self.schedule_plans.len() == 1
+                && self.schedule_plans[0].name == "Default"
+                && self.schedule_plans[0].periods.len() == 1
+                && self.schedule_plans[0].periods[0].interval_min == 60;
+
+            if is_default_plans {
                 tracing::info!(
-                    "Migrating legacy refresh_interval_min ({}) to schedule",
+                    "Migrating legacy refresh_interval_min ({}) to schedule_plans",
                     interval
                 );
-                self.schedule = vec![SchedulePeriod::new("00:00", "00:00", interval)];
+                self.schedule_plans = vec![SchedulePlan::new(
+                    "Default",
+                    vec![SchedulePeriod::new("00:00", "00:00", interval)],
+                )];
+                migrated = true;
             }
+        }
+
+        if migrated {
+            // Ensure all days are assigned to Default plan
+            self.day_assignments = default_day_assignments();
         }
     }
 
     /// Validate configuration values
     pub fn validate(&self) -> Result<(), ConfigError> {
-        // Validate schedule
-        if self.schedule.is_empty() {
+        // Validate schedule plans
+        if self.schedule_plans.is_empty() {
             return Err(ConfigError::ValidationError(
-                "Schedule must have at least one period".to_string(),
+                "At least one schedule plan is required".to_string(),
             ));
         }
 
-        for (i, period) in self.schedule.iter().enumerate() {
-            period.validate().map_err(|e| {
-                ConfigError::ValidationError(format!("Schedule period {}: {}", i + 1, e))
-            })?;
+        // Check for duplicate plan names
+        let mut plan_names: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        for plan in &self.schedule_plans {
+            if !plan_names.insert(&plan.name) {
+                return Err(ConfigError::ValidationError(format!(
+                    "Duplicate schedule plan name: '{}'",
+                    plan.name
+                )));
+            }
+            plan.validate()?;
         }
 
-        // Validate schedule coverage (all 24 hours covered)
-        self.validate_schedule_coverage()?;
+        // Validate day assignments
+        for day in Weekday::all() {
+            let plan_name = self.day_assignments.get(day).ok_or_else(|| {
+                ConfigError::ValidationError(format!(
+                    "Missing day assignment for {}",
+                    day.display_name()
+                ))
+            })?;
+
+            if !self.schedule_plans.iter().any(|p| p.name == *plan_name) {
+                return Err(ConfigError::ValidationError(format!(
+                    "{} is assigned to non-existent plan '{}'",
+                    day.display_name(),
+                    plan_name
+                )));
+            }
+        }
 
         if !matches!(self.rotation, 0 | 90 | 180 | 270) {
             return Err(ConfigError::ValidationError(
@@ -327,95 +618,41 @@ impl Config {
         Ok(())
     }
 
-    /// Validate that the schedule covers all 24 hours without gaps
-    fn validate_schedule_coverage(&self) -> Result<(), ConfigError> {
-        // Special case: single period from 00:00 to 00:00 covers full day
-        if self.schedule.len() == 1
-            && self.schedule[0].start_time == "00:00"
-            && self.schedule[0].end_time == "00:00"
-        {
-            return Ok(());
-        }
-
-        // Check each minute of the day is covered by exactly one period
-        let mut coverage = vec![false; 1440];
-
-        for period in &self.schedule {
-            let start = period.start_minutes()?;
-            let end = period.end_minutes()?;
-
-            if period.spans_midnight()? {
-                // Period spans midnight
-                for minute in start..1440 {
-                    if coverage[minute as usize] {
-                        return Err(ConfigError::ValidationError(format!(
-                            "Overlapping schedule at {:02}:{:02}",
-                            minute / 60,
-                            minute % 60
-                        )));
-                    }
-                    coverage[minute as usize] = true;
-                }
-                for minute in 0..end {
-                    if coverage[minute as usize] {
-                        return Err(ConfigError::ValidationError(format!(
-                            "Overlapping schedule at {:02}:{:02}",
-                            minute / 60,
-                            minute % 60
-                        )));
-                    }
-                    coverage[minute as usize] = true;
-                }
-            } else {
-                // Normal period
-                for minute in start..end {
-                    if coverage[minute as usize] {
-                        return Err(ConfigError::ValidationError(format!(
-                            "Overlapping schedule at {:02}:{:02}",
-                            minute / 60,
-                            minute % 60
-                        )));
-                    }
-                    coverage[minute as usize] = true;
-                }
-            }
-        }
-
-        // Check for gaps
-        for (minute, &covered) in coverage.iter().enumerate() {
-            if !covered {
-                return Err(ConfigError::ValidationError(format!(
-                    "Schedule gap at {:02}:{:02}",
-                    minute / 60,
-                    minute % 60
-                )));
-            }
-        }
-
-        Ok(())
+    /// Get schedule plan by name
+    pub fn get_plan(&self, name: &str) -> Option<&SchedulePlan> {
+        self.schedule_plans.iter().find(|p| p.name == name)
     }
 
-    /// Get the current refresh interval based on time of day
+    /// Get the schedule plan for a specific weekday
+    pub fn get_plan_for_day(&self, day: Weekday) -> Option<&SchedulePlan> {
+        self.day_assignments
+            .get(&day)
+            .and_then(|name| self.get_plan(name))
+    }
+
+    /// Get the current active schedule plan based on today's day of week
+    pub fn get_current_plan(&self) -> Option<&SchedulePlan> {
+        let now = chrono::Local::now();
+        let weekday = Weekday::from_chrono(now.weekday());
+        self.get_plan_for_day(weekday)
+    }
+
+    /// Get the current weekday
+    pub fn get_current_weekday() -> Weekday {
+        let now = chrono::Local::now();
+        Weekday::from_chrono(now.weekday())
+    }
+
+    /// Get the current refresh interval based on day and time
     pub fn get_current_interval(&self) -> u32 {
         let now = chrono::Local::now();
         let current_minutes = now.hour() * 60 + now.minute();
 
-        self.get_interval_for_time(current_minutes)
-    }
-
-    /// Get the refresh interval for a specific time (minutes since midnight)
-    pub fn get_interval_for_time(&self, time_minutes: u32) -> u32 {
-        for period in &self.schedule {
-            if let Ok(true) = period.contains_time(time_minutes) {
-                return period.interval_min;
-            }
+        if let Some(plan) = self.get_current_plan() {
+            plan.get_interval_for_time(current_minutes)
+        } else {
+            60 // Fallback
         }
-
-        // Fallback to first period's interval (should never happen with valid config)
-        self.schedule
-            .first()
-            .map(|p| p.interval_min)
-            .unwrap_or(60)
     }
 
     /// Get the currently active schedule period
@@ -423,13 +660,8 @@ impl Config {
         let now = chrono::Local::now();
         let current_minutes = now.hour() * 60 + now.minute();
 
-        for period in &self.schedule {
-            if let Ok(true) = period.contains_time(current_minutes) {
-                return Some(period);
-            }
-        }
-
-        self.schedule.first()
+        self.get_current_plan()
+            .and_then(|plan| plan.get_period_for_time(current_minutes))
     }
 
     /// Check if an image URL is configured

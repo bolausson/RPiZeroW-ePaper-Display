@@ -1,12 +1,26 @@
 {
     "image_url": "",
-    "schedule": [
+    "schedule_plans": [
         {
-            "start_time": "00:00",
-            "end_time": "00:00",
-            "interval_min": 60
+            "name": "Default",
+            "periods": [
+                {
+                    "start_time": "00:00",
+                    "end_time": "00:00",
+                    "interval_min": 60
+                }
+            ]
         }
     ],
+    "day_assignments": {
+        "Mon": "Default",
+        "Tue": "Default",
+        "Wed": "Default",
+        "Thu": "Default",
+        "Fri": "Default",
+        "Sat": "Default",
+        "Sun": "Default"
+    },
     "rotation": 0,
     "mirror_h": false,
     "mirror_v": false,

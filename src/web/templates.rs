@@ -2,40 +2,48 @@
 //!
 //! Embedded HTML templates for the configuration UI.
 
-use crate::config::{Config, SchedulePeriod};
+use crate::config::{Config, SchedulePlan, Weekday};
 
-/// Generate HTML for the schedule table rows
-fn render_schedule_rows(schedule: &[SchedulePeriod]) -> String {
-    schedule
+/// Generate HTML for schedule plans data (as JSON for JavaScript)
+fn render_schedule_plans_json(plans: &[SchedulePlan]) -> String {
+    serde_json::to_string(plans).unwrap_or_else(|_| "[]".to_string())
+}
+
+/// Generate HTML for day assignments data (as JSON for JavaScript)
+fn render_day_assignments_json(config: &Config) -> String {
+    let assignments: Vec<(&str, &str)> = Weekday::all()
         .iter()
-        .enumerate()
-        .map(|(i, period)| {
-            format!(
-                r#"<tr class="schedule-row">
-                    <td><input type="time" name="schedule_start_{i}" value="{start}" required></td>
-                    <td><input type="time" name="schedule_end_{i}" value="{end}" required></td>
-                    <td><input type="number" name="schedule_interval_{i}" value="{interval}" min="1" max="1440" required style="width:80px"></td>
-                    <td><button type="button" class="btn-small btn-red" onclick="removeScheduleRow(this)" title="Remove">✕</button></td>
-                </tr>"#,
-                i = i,
-                start = &period.start_time,
-                end = &period.end_time,
-                interval = period.interval_min
-            )
+        .map(|day| {
+            let plan_name = config
+                .day_assignments
+                .get(day)
+                .map(|s| s.as_str())
+                .unwrap_or("Default");
+            (day.short_name(), plan_name)
         })
-        .collect::<Vec<_>>()
-        .join("\n")
+        .collect();
+    serde_json::to_string(&assignments).unwrap_or_else(|_| "[]".to_string())
 }
 
 /// Get the current active period info for display
 fn get_active_period_info(config: &Config) -> String {
+    let weekday = Config::get_current_weekday();
+    let plan_name = config
+        .get_current_plan()
+        .map(|p| p.name.as_str())
+        .unwrap_or("None");
+
     if let Some(period) = config.get_current_period() {
         format!(
-            "{} - {} (every {} min)",
-            period.start_time, period.end_time, period.interval_min
+            "{} → '{}': {} - {} (every {} min)",
+            weekday.display_name(),
+            plan_name,
+            period.start_time,
+            period.end_time,
+            period.interval_min
         )
     } else {
-        "No active period".to_string()
+        format!("{} → No active schedule", weekday.display_name())
     }
 }
 
@@ -45,9 +53,10 @@ pub fn render_config_page(config: &Config, status_message: Option<&str>) -> Stri
         .map(|msg| format!(r#"<div class="alert">{}</div>"#, msg))
         .unwrap_or_default();
 
-    let schedule_rows = render_schedule_rows(&config.schedule);
     let active_period = get_active_period_info(config);
     let current_interval = config.get_current_interval();
+    let schedule_plans_json = render_schedule_plans_json(&config.schedule_plans);
+    let day_assignments_json = render_day_assignments_json(config);
 
     format!(
         r##"<!DOCTYPE html>
@@ -58,73 +67,60 @@ pub fn render_config_page(config: &Config, status_message: Option<&str>) -> Stri
     <title>Pi Zero W ePaper Display</title>
     <style>
         * {{ box-sizing: border-box; }}
-        body {{
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            margin: 0; padding: 20px; background: #f5f5f5;
-        }}
-        .container {{
-            max-width: 700px; margin: 0 auto; background: white;
-            padding: 24px; border-radius: 12px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-        }}
+        body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; padding: 20px; background: #f5f5f5; }}
+        .container {{ max-width: 800px; margin: 0 auto; background: white; padding: 24px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }}
         h1 {{ color: #333; margin-top: 0; }}
-        .status {{
-            background: #e3f2fd; padding: 16px; border-radius: 8px;
-            margin-bottom: 20px; font-size: 14px;
-            word-break: break-word; overflow-wrap: break-word;
-        }}
-        .alert {{
-            background: #c8e6c9; padding: 12px; border-radius: 8px;
-            margin-bottom: 16px; color: #2e7d32;
-        }}
+        h3 {{ color: #444; margin-top: 24px; margin-bottom: 12px; }}
+        .status {{ background: #e3f2fd; padding: 16px; border-radius: 8px; margin-bottom: 20px; font-size: 14px; word-break: break-word; }}
+        .alert {{ background: #c8e6c9; padding: 12px; border-radius: 8px; margin-bottom: 16px; color: #2e7d32; }}
         label {{ display: block; margin-top: 16px; font-weight: 600; color: #555; }}
-        input, select {{
-            width: 100%; padding: 12px; margin-top: 6px;
-            border: 1px solid #ddd; border-radius: 8px;
-            font-size: 16px;
-        }}
+        input, select {{ width: 100%; padding: 10px; margin-top: 6px; border: 1px solid #ddd; border-radius: 8px; font-size: 15px; }}
         input:focus, select:focus {{ outline: none; border-color: #2196F3; }}
-        .checkbox-group {{ display: flex; gap: 20px; margin-top: 8px; }}
-        .checkbox-group label {{
-            display: flex; align-items: center; gap: 8px;
-            font-weight: normal; margin-top: 0;
-        }}
+        .checkbox-group {{ display: flex; gap: 20px; margin-top: 8px; flex-wrap: wrap; }}
+        .checkbox-group label {{ display: flex; align-items: center; gap: 8px; font-weight: normal; margin-top: 0; }}
         .buttons {{ display: flex; gap: 10px; margin-top: 24px; flex-wrap: wrap; }}
-        button {{
-            padding: 12px 24px; border: none; border-radius: 8px;
-            font-size: 16px; cursor: pointer; font-weight: 600;
-        }}
+        button {{ padding: 10px 20px; border: none; border-radius: 8px; font-size: 15px; cursor: pointer; font-weight: 600; }}
         .btn-primary {{ background: #4CAF50; color: white; }}
         .btn-blue {{ background: #2196F3; color: white; }}
         .btn-orange {{ background: #FF9800; color: white; }}
         .btn-red {{ background: #f44336; color: white; }}
-        .btn-small {{ padding: 6px 12px; font-size: 14px; }}
+        .btn-small {{ padding: 6px 12px; font-size: 13px; }}
         .btn-gray {{ background: #9e9e9e; color: white; }}
         button:hover {{ opacity: 0.9; }}
         hr {{ border: none; border-top: 1px solid #eee; margin: 24px 0; }}
         .actions {{ display: flex; gap: 10px; flex-wrap: wrap; }}
         .actions a {{ text-decoration: none; }}
         .help-text {{ color: #666; font-size: 13px; margin-top: 4px; }}
-        .help-section {{ background: #fafafa; padding: 16px; border-radius: 8px; margin-top: 8px; }}
-        .help-section h4 {{ margin: 0 0 12px 0; color: #555; font-size: 14px; }}
-        .help-section dl {{ margin: 0; }}
-        .help-section dt {{ font-weight: 600; color: #333; margin-top: 10px; }}
-        .help-section dt:first-child {{ margin-top: 0; }}
-        .help-section dd {{ margin: 4px 0 0 0; color: #666; font-size: 13px; }}
-        details {{ margin-top: 16px; }}
-        details summary {{ cursor: pointer; font-weight: 600; color: #555; padding: 8px 0; }}
-        details summary:hover {{ color: #333; }}
         .row {{ display: flex; gap: 10px; }}
         .row input {{ flex: 1; }}
-        /* Schedule table styles */
+        /* Tabs */
+        .tabs {{ display: flex; gap: 4px; border-bottom: 2px solid #e0e0e0; margin-top: 12px; flex-wrap: wrap; }}
+        .tab {{ padding: 8px 16px; cursor: pointer; border-radius: 8px 8px 0 0; background: #f0f0f0; font-weight: 500; font-size: 14px; }}
+        .tab.active {{ background: #2196F3; color: white; }}
+        .tab-add {{ background: #e8f5e9; color: #2e7d32; }}
+        .tab-content {{ display: none; padding: 16px; border: 1px solid #e0e0e0; border-top: none; border-radius: 0 0 8px 8px; }}
+        .tab-content.active {{ display: block; }}
+        /* Schedule table */
         .schedule-table {{ width: 100%; border-collapse: collapse; margin-top: 8px; }}
         .schedule-table th {{ text-align: left; padding: 8px; background: #f5f5f5; font-size: 13px; }}
         .schedule-table td {{ padding: 6px; }}
-        .schedule-table input[type="time"] {{ width: 110px; padding: 8px; }}
-        .schedule-table input[type="number"] {{ width: 80px; padding: 8px; }}
+        .schedule-table input[type="time"] {{ width: 100px; padding: 6px; }}
+        .schedule-table input[type="number"] {{ width: 70px; padding: 6px; }}
         .schedule-controls {{ display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }}
         .preset-btn {{ padding: 6px 12px; font-size: 12px; background: #e0e0e0; color: #333; }}
-        .active-period {{ background: #e8f5e9; padding: 8px 12px; border-radius: 6px; margin-top: 8px; font-size: 13px; }}
+        /* Day assignments */
+        .day-grid {{ display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px; margin-top: 12px; }}
+        .day-card {{ text-align: center; padding: 10px 4px; border: 2px solid #e0e0e0; border-radius: 8px; background: #fafafa; }}
+        .day-card.today {{ border-color: #4CAF50; background: #e8f5e9; }}
+        .day-card .day-name {{ font-weight: 600; font-size: 13px; color: #333; margin-bottom: 6px; }}
+        .day-card select {{ width: 100%; padding: 4px; font-size: 12px; border-radius: 4px; }}
+        .plan-name-input {{ margin-bottom: 12px; }}
+        details {{ margin-top: 16px; }}
+        details summary {{ cursor: pointer; font-weight: 600; color: #555; padding: 8px 0; }}
+        /* Footer */
+        .footer {{ margin-top: 24px; padding-top: 16px; border-top: 1px solid #eee; text-align: center; font-size: 13px; color: #888; }}
+        .footer a {{ color: #666; text-decoration: none; }}
+        .footer a:hover {{ color: #333; text-decoration: underline; }}
     </style>
 </head>
 <body>
@@ -132,46 +128,28 @@ pub fn render_config_page(config: &Config, status_message: Option<&str>) -> Stri
         <h1>🖼️ Pi Zero W ePaper Display</h1>
         {status_html}
         <div class="status">
-            <strong>Current URL:</strong> <a href="{url}" target="_blank" rel="noopener" style="color: #1565c0; word-break: break-all;">{url_display}</a><br>
-            <strong>Active Schedule:</strong> {active_period} &nbsp;|&nbsp;
-            <strong>Current Interval:</strong> {current_interval} min<br>
-            <strong>Size:</strong> {display_width}×{display_height} &nbsp;|&nbsp;
-            <strong>Rotation:</strong> {rotation}° &nbsp;|&nbsp;
-            <strong>Order:</strong> {transform_order}
+            <strong>URL:</strong> <a href="{url}" target="_blank" style="color: #1565c0;">{url_display}</a><br>
+            <strong>Active:</strong> {active_period} &nbsp;|&nbsp; <strong>Interval:</strong> {current_interval} min<br>
+            <strong>Size:</strong> {display_width}×{display_height} &nbsp;|&nbsp; <strong>Rotation:</strong> {rotation}°
         </div>
         <form method="POST" action="/save" id="configForm">
             <label>Image URL:</label>
             <input type="url" name="image_url" value="{url}" placeholder="https://example.com/image.png">
-            <div class="help-text">URL to a PNG image (800×480 recommended). Supports HTTP/HTTPS.</div>
 
-            <label>Refresh Schedule:</label>
-            <table class="schedule-table" id="scheduleTable">
-                <thead>
-                    <tr>
-                        <th>Start Time</th>
-                        <th>End Time</th>
-                        <th>Interval (min)</th>
-                        <th></th>
-                    </tr>
-                </thead>
-                <tbody id="scheduleBody">
-                    {schedule_rows}
-                </tbody>
-            </table>
-            <div class="schedule-controls">
-                <button type="button" class="btn-small btn-blue" onclick="addScheduleRow()">+ Add Period</button>
-                <button type="button" class="btn-small preset-btn" onclick="setPreset('simple')">Simple (24h)</button>
-                <button type="button" class="btn-small preset-btn" onclick="setPreset('daynight')">Day/Night</button>
-                <button type="button" class="btn-small preset-btn" onclick="setPreset('work')">Work Hours</button>
-            </div>
-            <div class="help-text">Define time periods with different refresh intervals. Periods must cover all 24 hours without gaps or overlaps. Use 00:00-00:00 for a single 24-hour period.</div>
+            <h3>📅 Schedule Plans</h3>
+            <div class="help-text">Create named schedule plans and assign them to different days of the week.</div>
 
-            <label>Display Dimensions:</label>
+            <div class="day-grid" id="dayAssignments"></div>
+
+            <div class="tabs" id="planTabs"></div>
+            <div id="planContents"></div>
+
+            <h3>⚙️ Display Settings</h3>
+            <label>Dimensions:</label>
             <div class="row">
                 <input type="number" name="display_width" value="{display_width}" min="100" max="2000" placeholder="Width">
                 <input type="number" name="display_height" value="{display_height}" min="100" max="2000" placeholder="Height">
             </div>
-            <div class="help-text">Target dimensions in pixels. Default: 800×480 for the 7.3" e-paper display.</div>
 
             <label>Rotation:</label>
             <select name="rotation">
@@ -180,162 +158,191 @@ pub fn render_config_page(config: &Config, status_message: Option<&str>) -> Stri
                 <option value="180" {sel180}>180° (Upside down)</option>
                 <option value="270" {sel270}>270° Clockwise</option>
             </select>
-            <div class="help-text">Rotate the image clockwise before displaying.</div>
 
             <label>Transform Order:</label>
             <select name="rotate_first">
                 <option value="1" {rot_first_yes}>Rotate then Mirror</option>
                 <option value="0" {rot_first_no}>Mirror then Rotate</option>
             </select>
-            <div class="help-text">Order in which rotation and mirroring are applied to the image.</div>
 
             <label>Options:</label>
             <div class="checkbox-group">
-                <label><input type="checkbox" name="mirror_h" {mirror_h}> Mirror Horizontal</label>
-                <label><input type="checkbox" name="mirror_v" {mirror_v}> Mirror Vertical</label>
+                <label><input type="checkbox" name="mirror_h" {mirror_h}> Mirror H</label>
+                <label><input type="checkbox" name="mirror_v" {mirror_v}> Mirror V</label>
                 <label><input type="checkbox" name="scale_to_fit" {scale_to_fit}> Scale to Fit</label>
             </div>
-            <div class="help-text">Mirror flips the image. Scale to Fit resizes images to fill the display dimensions.</div>
 
             <div class="buttons">
-                <button type="submit" class="btn-primary" title="Save configuration without updating display">Save</button>
-                <button type="submit" formaction="/apply" class="btn-blue" title="Save configuration and refresh display immediately">Save &amp; Apply</button>
+                <button type="submit" class="btn-primary">Save</button>
+                <button type="submit" formaction="/apply" class="btn-blue">Save &amp; Apply</button>
             </div>
-            <div class="help-text"><strong>Save</strong> stores settings without refreshing. <strong>Save &amp; Apply</strong> saves and immediately updates the display.</div>
         </form>
         <hr>
         <h3>Actions</h3>
         <div class="actions">
-            <a href="/action/show"><button type="button" class="btn-orange" title="Download image and refresh display now">Refresh Now</button></a>
-            <a href="/action/test"><button type="button" class="btn-blue" title="Display 7-color test pattern">Test Pattern</button></a>
-            <a href="/action/clear"><button type="button" class="btn-red" title="Clear display to white">Clear Display</button></a>
+            <a href="/action/show"><button type="button" class="btn-orange">Refresh Now</button></a>
+            <a href="/action/test"><button type="button" class="btn-blue">Test Pattern</button></a>
+            <a href="/action/clear"><button type="button" class="btn-red">Clear Display</button></a>
         </div>
-        <div class="help-text" style="margin-top: 8px;"><strong>Refresh Now</strong> fetches and displays the image. <strong>Test Pattern</strong> shows color stripes. <strong>Clear</strong> blanks the screen.</div>
 
         <details>
-            <summary>ℹ️ Help &amp; Reference</summary>
-            <div class="help-section">
-                <h4>Configuration Settings</h4>
-                <dl>
-                    <dt>Image URL</dt>
-                    <dd>The URL to download the image from. PNG format is recommended. For best results, use images matching the configured display dimensions. Works well with Grafana render URLs for dashboards.</dd>
-
-                    <dt>Refresh Schedule</dt>
-                    <dd>Define time-based refresh intervals. Each period specifies a start time, end time, and refresh interval in minutes. Periods must cover all 24 hours without gaps or overlaps. Use 00:00-00:00 for a single 24-hour period. Presets: <strong>Simple</strong> (one 60-min interval), <strong>Day/Night</strong> (faster during day), <strong>Work Hours</strong> (fastest during work hours).</dd>
-
-                    <dt>Display Dimensions</dt>
-                    <dd>Target width and height in pixels. Default is 800×480 for the 7.3" e-paper display. Images will be scaled/transformed to fit these dimensions before dithering.</dd>
-
-                    <dt>Rotation</dt>
-                    <dd>Rotates the image clockwise by the selected degrees. Use 180° if the display is mounted upside down.</dd>
-
-                    <dt>Transform Order</dt>
-                    <dd>Controls whether rotation is applied before or after mirroring. "Rotate then Mirror" applies rotation first, then mirroring. "Mirror then Rotate" does the opposite. This affects the final image orientation when both are used.</dd>
-
-                    <dt>Mirror Horizontal</dt>
-                    <dd>Flips the image left-to-right (like a mirror reflection). Useful for rear-projection setups or correcting reversed images.</dd>
-
-                    <dt>Mirror Vertical</dt>
-                    <dd>Flips the image top-to-bottom. Combined with horizontal mirroring, this is equivalent to 180° rotation.</dd>
-
-                    <dt>Scale to Fit</dt>
-                    <dd>Automatically scales images to fill the configured display dimensions. If disabled, images smaller than the display will be centered; larger images will be cropped.</dd>
-                </dl>
-
-                <h4 style="margin-top: 16px;">Buttons</h4>
-                <dl>
-                    <dt>Save</dt>
-                    <dd>Saves the current configuration to persistent storage. The display will use these settings on the next scheduled refresh, but no immediate update occurs.</dd>
-
-                    <dt>Save &amp; Apply</dt>
-                    <dd>Saves configuration AND immediately downloads and displays the image. Use this to preview changes right away. Display refresh takes ~15-20 seconds.</dd>
-
-                    <dt>Refresh Now</dt>
-                    <dd>Immediately downloads the image from the configured URL and updates the display using current saved settings. Does not save any pending form changes.</dd>
-
-                    <dt>Test Pattern</dt>
-                    <dd>Displays a 7-color test pattern (horizontal stripes) to verify the display is working correctly. Shows: Black, White, Yellow, Red, Orange, Blue, Green.</dd>
-
-                    <dt>Clear Display</dt>
-                    <dd>Clears the entire display to white/blank. Useful for storage or when you want to turn off the display content.</dd>
-                </dl>
-
-                <h4 style="margin-top: 16px;">Display Information</h4>
-                <dl>
-                    <dt>Display Type</dt>
-                    <dd>Waveshare 7.3" E-Paper HAT (E) - Spectra 6 with 7 colors: Black, White, Yellow, Red, Orange, Blue, Green.</dd>
-
-                    <dt>Resolution</dt>
-                    <dd>800 × 480 pixels. Images are automatically dithered using Floyd-Steinberg algorithm for optimal color reproduction.</dd>
-
-                    <dt>Refresh Time</dt>
-                    <dd>Full display refresh takes approximately 15-20 seconds. This is normal for multi-color e-paper displays.</dd>
-                </dl>
+            <summary>ℹ️ Help</summary>
+            <div style="background:#fafafa;padding:16px;border-radius:8px;margin-top:8px;font-size:13px;">
+                <p><strong>Schedule Plans:</strong> Create named schedules (e.g., "Weekday", "Weekend") with different time periods. Assign plans to days of the week.</p>
+                <p><strong>Time Periods:</strong> Each plan must cover all 24 hours. Use 00:00-00:00 for a single all-day period.</p>
+                <p><strong>Display:</strong> Waveshare 7.3" E-Paper, 800×480, 6-color (Black, White, Red, Yellow, Blue, Green).</p>
             </div>
         </details>
     </div>
     <script>
-    let rowCounter = {schedule_count};
+    const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    const DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+    let plans = {schedule_plans_json};
+    let dayAssignments = Object.fromEntries({day_assignments_json});
+    let activePlanIdx = 0;
 
-    function addScheduleRow(start, end, interval) {{
-        start = start || '00:00';
-        end = end || '00:00';
-        interval = interval || 60;
-        const tbody = document.getElementById('scheduleBody');
-        const tr = document.createElement('tr');
-        tr.className = 'schedule-row';
-        tr.innerHTML = `
-            <td><input type="time" name="schedule_start_${{rowCounter}}" value="${{start}}" required></td>
-            <td><input type="time" name="schedule_end_${{rowCounter}}" value="${{end}}" required></td>
-            <td><input type="number" name="schedule_interval_${{rowCounter}}" value="${{interval}}" min="1" max="1440" required style="width:80px"></td>
-            <td><button type="button" class="btn-small btn-red" onclick="removeScheduleRow(this)" title="Remove">✕</button></td>
-        `;
-        tbody.appendChild(tr);
-        rowCounter++;
+    function renderAll() {{
+        renderDayAssignments();
+        renderTabs();
+        renderPlanContent();
     }}
 
-    function removeScheduleRow(btn) {{
-        const tbody = document.getElementById('scheduleBody');
-        if (tbody.querySelectorAll('.schedule-row').length > 1) {{
-            btn.closest('tr').remove();
-        }} else {{
-            alert('At least one schedule period is required.');
-        }}
+    function renderDayAssignments() {{
+        const container = document.getElementById('dayAssignments');
+        const today = new Date().getDay();
+        const todayIdx = today === 0 ? 6 : today - 1;
+        container.innerHTML = DAYS.map((day, i) => `
+            <div class="day-card ${{i === todayIdx ? 'today' : ''}}">
+                <div class="day-name">${{day}}</div>
+                <select name="day_${{day}}" onchange="dayAssignments['${{day}}']=this.value">
+                    ${{plans.map(p => `<option value="${{p.name}}" ${{dayAssignments[day]===p.name?'selected':''}}>${{p.name}}</option>`).join('')}}
+                </select>
+            </div>
+        `).join('');
     }}
 
-    function clearSchedule() {{
-        const tbody = document.getElementById('scheduleBody');
-        tbody.innerHTML = '';
-        rowCounter = 0;
+    function renderTabs() {{
+        const container = document.getElementById('planTabs');
+        container.innerHTML = plans.map((p, i) =>
+            `<div class="tab ${{i===activePlanIdx?'active':''}}" onclick="selectPlan(${{i}})">${{p.name}}</div>`
+        ).join('') + `<div class="tab tab-add" onclick="addPlan()">+ New Plan</div>`;
     }}
 
-    function setPreset(preset) {{
-        clearSchedule();
-        if (preset === 'simple') {{
-            addScheduleRow('00:00', '00:00', 60);
-        }} else if (preset === 'daynight') {{
-            addScheduleRow('06:00', '22:00', 30);
-            addScheduleRow('22:00', '06:00', 120);
-        }} else if (preset === 'work') {{
-            addScheduleRow('00:00', '07:00', 120);
-            addScheduleRow('07:00', '19:00', 15);
-            addScheduleRow('19:00', '00:00', 60);
-        }}
+    function renderPlanContent() {{
+        const container = document.getElementById('planContents');
+        container.innerHTML = plans.map((plan, pi) => `
+            <div class="tab-content ${{pi===activePlanIdx?'active':''}}" id="plan_${{pi}}">
+                <input type="hidden" name="plan_name_${{pi}}" value="${{plan.name}}">
+                <div class="plan-name-input">
+                    <label style="display:inline;margin:0;">Plan Name:</label>
+                    <input type="text" value="${{plan.name}}" style="width:200px;display:inline;margin-left:8px;"
+                           onchange="renamePlan(${{pi}}, this.value)" ${{plans.length===1?'readonly':''}}>
+                    ${{plans.length > 1 ? `<button type="button" class="btn-small btn-red" style="margin-left:8px;" onclick="deletePlan(${{pi}})">Delete Plan</button>` : ''}}
+                </div>
+                <table class="schedule-table">
+                    <thead><tr><th>Start</th><th>End</th><th>Interval (min)</th><th></th></tr></thead>
+                    <tbody id="periods_${{pi}}">
+                        ${{plan.periods.map((p, ri) => renderPeriodRow(pi, ri, p)).join('')}}
+                    </tbody>
+                </table>
+                <div class="schedule-controls">
+                    <button type="button" class="btn-small btn-blue" onclick="addPeriod(${{pi}})">+ Add Period</button>
+                    <button type="button" class="btn-small preset-btn" onclick="setPreset(${{pi}},'simple')">Simple</button>
+                    <button type="button" class="btn-small preset-btn" onclick="setPreset(${{pi}},'daynight')">Day/Night</button>
+                    <button type="button" class="btn-small preset-btn" onclick="setPreset(${{pi}},'work')">Work Hours</button>
+                </div>
+            </div>
+        `).join('');
+        syncHiddenFields();
     }}
+
+    function renderPeriodRow(pi, ri, period) {{
+        return `<tr>
+            <td><input type="time" value="${{period.start_time}}" onchange="updatePeriod(${{pi}},${{ri}},'start_time',this.value)"></td>
+            <td><input type="time" value="${{period.end_time}}" onchange="updatePeriod(${{pi}},${{ri}},'end_time',this.value)"></td>
+            <td><input type="number" value="${{period.interval_min}}" min="1" max="1440" onchange="updatePeriod(${{pi}},${{ri}},'interval_min',parseInt(this.value))"></td>
+            <td><button type="button" class="btn-small btn-red" onclick="removePeriod(${{pi}},${{ri}})">✕</button></td>
+        </tr>`;
+    }}
+
+    function selectPlan(idx) {{ activePlanIdx = idx; renderTabs(); renderPlanContent(); }}
+
+    function addPlan() {{
+        const name = prompt('Enter plan name:', 'New Plan');
+        if (name && !plans.find(p => p.name === name)) {{
+            plans.push({{ name: name, periods: [{{ start_time: '00:00', end_time: '00:00', interval_min: 60 }}] }});
+            activePlanIdx = plans.length - 1;
+            renderAll();
+        }} else if (name) {{ alert('Plan name already exists.'); }}
+    }}
+
+    function renamePlan(idx, newName) {{
+        if (!newName.trim()) return;
+        const oldName = plans[idx].name;
+        if (plans.find((p,i) => i !== idx && p.name === newName)) {{ alert('Name exists.'); return; }}
+        plans[idx].name = newName;
+        Object.keys(dayAssignments).forEach(d => {{ if (dayAssignments[d] === oldName) dayAssignments[d] = newName; }});
+        renderAll();
+    }}
+
+    function deletePlan(idx) {{
+        if (plans.length <= 1) return;
+        const name = plans[idx].name;
+        const fallback = plans.find((p,i) => i !== idx).name;
+        Object.keys(dayAssignments).forEach(d => {{ if (dayAssignments[d] === name) dayAssignments[d] = fallback; }});
+        plans.splice(idx, 1);
+        activePlanIdx = Math.min(activePlanIdx, plans.length - 1);
+        renderAll();
+    }}
+
+    function addPeriod(pi) {{
+        plans[pi].periods.push({{ start_time: '00:00', end_time: '00:00', interval_min: 60 }});
+        renderPlanContent();
+    }}
+
+    function removePeriod(pi, ri) {{
+        if (plans[pi].periods.length > 1) {{ plans[pi].periods.splice(ri, 1); renderPlanContent(); }}
+        else {{ alert('At least one period required.'); }}
+    }}
+
+    function updatePeriod(pi, ri, field, value) {{
+        plans[pi].periods[ri][field] = value;
+        syncHiddenFields();
+    }}
+
+    function setPreset(pi, preset) {{
+        if (preset === 'simple') plans[pi].periods = [{{ start_time: '00:00', end_time: '00:00', interval_min: 60 }}];
+        else if (preset === 'daynight') plans[pi].periods = [{{ start_time: '06:00', end_time: '22:00', interval_min: 30 }}, {{ start_time: '22:00', end_time: '06:00', interval_min: 120 }}];
+        else if (preset === 'work') plans[pi].periods = [{{ start_time: '00:00', end_time: '07:00', interval_min: 120 }}, {{ start_time: '07:00', end_time: '19:00', interval_min: 15 }}, {{ start_time: '19:00', end_time: '00:00', interval_min: 60 }}];
+        renderPlanContent();
+    }}
+
+    function syncHiddenFields() {{
+        let existing = document.getElementById('plansData');
+        if (existing) existing.remove();
+        const input = document.createElement('input');
+        input.type = 'hidden'; input.name = 'plans_json'; input.id = 'plansData';
+        input.value = JSON.stringify({{ plans: plans, day_assignments: dayAssignments }});
+        document.getElementById('configForm').appendChild(input);
+    }}
+
+    renderAll();
     </script>
+    <div class="footer">
+        <a href="https://github.com/bolausson/RPiZeroW-ePaper-Display" target="_blank">🔗 GitHub Repository</a>
+    </div>
 </body>
 </html>"##,
         status_html = status_html,
         url = html_escape(&config.image_url),
-        url_display = truncate_url(&config.image_url, 80),
-        schedule_rows = schedule_rows,
-        schedule_count = config.schedule.len(),
+        url_display = truncate_url(&config.image_url, 60),
+        schedule_plans_json = schedule_plans_json,
+        day_assignments_json = day_assignments_json,
         active_period = active_period,
         current_interval = current_interval,
         display_width = config.display_width,
         display_height = config.display_height,
         rotation = config.rotation,
-        transform_order = if config.rotate_first { "Rot→Mir" } else { "Mir→Rot" },
         sel0 = selected_if(config.rotation == 0),
         sel90 = selected_if(config.rotation == 90),
         sel180 = selected_if(config.rotation == 180),

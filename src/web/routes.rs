@@ -1,7 +1,7 @@
 //! HTTP route handlers for the web interface.
 
 use super::templates;
-use crate::config::{Config, SchedulePeriod};
+use crate::config::{Config, DayAssignments, SchedulePeriod, SchedulePlan, Weekday};
 use crate::image_proc::ImageProcessor;
 use axum::{
     extract::{Form, Path, State},
@@ -31,43 +31,65 @@ fn default_display_height() -> u32 {
     480
 }
 
-/// Parse schedule periods from form data
-fn parse_schedule_from_form(form: &FormData) -> Result<Vec<SchedulePeriod>, String> {
-    let mut periods = Vec::new();
+/// JSON structure for plans data from the form
+#[derive(serde::Deserialize)]
+struct PlansFormData {
+    plans: Vec<PlanData>,
+    day_assignments: HashMap<String, String>,
+}
 
-    // Find all schedule indices by looking for schedule_start_* fields
-    let mut indices: Vec<usize> = form
-        .keys()
-        .filter_map(|k| {
-            k.strip_prefix("schedule_start_")
-                .and_then(|s| s.parse::<usize>().ok())
+#[derive(serde::Deserialize)]
+struct PlanData {
+    name: String,
+    periods: Vec<PeriodData>,
+}
+
+#[derive(serde::Deserialize)]
+struct PeriodData {
+    start_time: String,
+    end_time: String,
+    interval_min: u32,
+}
+
+/// Parse schedule plans from form data
+fn parse_plans_from_form(form: &FormData) -> Result<(Vec<SchedulePlan>, DayAssignments), String> {
+    let plans_json = form
+        .get("plans_json")
+        .ok_or("Missing schedule plans data")?;
+
+    let data: PlansFormData =
+        serde_json::from_str(plans_json).map_err(|e| format!("Invalid plans data: {}", e))?;
+
+    if data.plans.is_empty() {
+        return Err("At least one schedule plan is required".to_string());
+    }
+
+    // Convert to SchedulePlan structs
+    let plans: Vec<SchedulePlan> = data
+        .plans
+        .into_iter()
+        .map(|p| {
+            let periods: Vec<SchedulePeriod> = p
+                .periods
+                .into_iter()
+                .map(|pd| SchedulePeriod::new(&pd.start_time, &pd.end_time, pd.interval_min))
+                .collect();
+            SchedulePlan::new(&p.name, periods)
         })
         .collect();
-    indices.sort();
 
-    for i in &indices {
-        let start = form
-            .get(&format!("schedule_start_{}", i))
-            .ok_or_else(|| format!("Missing start time for period {}", i))?;
-        let end = form
-            .get(&format!("schedule_end_{}", i))
-            .ok_or_else(|| format!("Missing end time for period {}", i))?;
-        let interval_str = form
-            .get(&format!("schedule_interval_{}", i))
-            .ok_or_else(|| format!("Missing interval for period {}", i))?;
-
-        let interval: u32 = interval_str
-            .parse()
-            .map_err(|_| format!("Invalid interval '{}' for period {}", interval_str, i))?;
-
-        periods.push(SchedulePeriod::new(start, end, interval));
+    // Convert day assignments
+    let mut day_assignments = DayAssignments::new();
+    for day in Weekday::all() {
+        let plan_name = data
+            .day_assignments
+            .get(day.short_name())
+            .cloned()
+            .unwrap_or_else(|| plans[0].name.clone());
+        day_assignments.insert(*day, plan_name);
     }
 
-    if periods.is_empty() {
-        return Err("At least one schedule period is required".to_string());
-    }
-
-    Ok(periods)
+    Ok((plans, day_assignments))
 }
 
 /// GET / - Main configuration page
@@ -199,8 +221,10 @@ async fn update_config(state: &AppState, form: &FormData) -> Result<(), String> 
     config.mirror_v = form.contains_key("mirror_v");
     config.scale_to_fit = form.contains_key("scale_to_fit");
 
-    // Parse schedule periods
-    config.schedule = parse_schedule_from_form(form)?;
+    // Parse schedule plans and day assignments
+    let (plans, day_assignments) = parse_plans_from_form(form)?;
+    config.schedule_plans = plans;
+    config.day_assignments = day_assignments;
 
     // Validate
     config.validate().map_err(|e| e.to_string())?;

@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 authors = ["bolausson"]
 description = "E-Paper display server for Raspberry Pi Zero W"
-license = "GPL-3.0"
+license = "CC-BY-NC-SA-4.0"
 
 [dependencies]
 # Async runtime - using current_thread for single-core Pi Zero W

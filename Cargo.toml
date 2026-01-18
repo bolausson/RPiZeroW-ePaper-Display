@@ -1,6 +1,6 @@
 [package]
 name = "rpizerow-epaper-display"
-version = "0.1.0"
+version = "1.4.1"
 edition = "2024"
 authors = ["bolausson"]
 description = "E-Paper display server for Raspberry Pi Zero W"

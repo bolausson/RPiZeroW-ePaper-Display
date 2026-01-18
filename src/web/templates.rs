@@ -91,6 +91,7 @@ pub fn render_config_page(config: &Config, status_message: Option<&str>) -> Stri
         .actions {{ display: flex; gap: 10px; flex-wrap: wrap; }}
         .actions a {{ text-decoration: none; }}
         .help-text {{ color: #666; font-size: 13px; margin-top: 4px; }}
+        textarea.url-input {{ width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; box-sizing: border-box; font-family: inherit; font-size: 14px; resize: vertical; min-height: 80px; }}
         .row {{ display: flex; gap: 10px; }}
         .row input {{ flex: 1; }}
         /* Tabs */
@@ -134,7 +135,8 @@ pub fn render_config_page(config: &Config, status_message: Option<&str>) -> Stri
         </div>
         <form method="POST" action="/save" id="configForm">
             <label>Image URL:</label>
-            <input type="url" name="image_url" value="{url}" placeholder="https://example.com/image.png">
+            <textarea name="image_url" class="url-input" rows="3" placeholder="https://example.com/image.png">{url}</textarea>
+            <div class="help-text">Enter the full URL to the image. Long URLs (e.g., Grafana render URLs) are supported.</div>
 
             <h3>📅 Schedule Plans</h3>
             <div class="help-text">Create named schedule plans and assign them to different days of the week.</div>
